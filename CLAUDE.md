@@ -7,37 +7,50 @@ This file provides guidance to AI assistants (Claude and others) working within 
 ## Repository Overview
 
 **Repository:** KrzysiekHan/teamstestrepo
+**Language:** C# / .NET
+**Type:** ASP.NET Core Web API
 **Status:** Newly initialized — no source code has been committed yet.
 
-> Update this section with a short description of the project's purpose, architecture, and primary language/framework once development begins.
+> Update this section with a short description of the API's purpose and domain once development begins.
 
 ---
 
 ## Project Structure
 
-> This section should be updated once source files are added. A typical structure might look like:
+Typical ASP.NET Core Web API layout (update once files are added):
 
 ```
 teamstestrepo/
-├── CLAUDE.md           # AI assistant guidance (this file)
-├── README.md           # Human-facing project documentation
-├── src/                # Application source code
-├── tests/              # Test suites
-├── docs/               # Additional documentation
-└── .github/            # GitHub Actions workflows / issue templates
+├── CLAUDE.md                        # AI assistant guidance (this file)
+├── README.md                        # Human-facing documentation
+├── teamstestrepo.sln                # Solution file
+├── src/
+│   └── TeamstestRepo.Api/           # Main Web API project
+│       ├── Controllers/             # API controllers
+│       ├── Models/                  # Request/response DTOs
+│       ├── Services/                # Business logic
+│       ├── Data/                    # EF Core DbContext, repositories
+│       ├── Middleware/              # Custom middleware
+│       ├── appsettings.json         # Configuration
+│       ├── appsettings.Development.json
+│       └── Program.cs               # App entry point / DI composition root
+└── tests/
+    ├── TeamstestRepo.UnitTests/     # xUnit unit tests
+    └── TeamstestRepo.IntegrationTests/ # Integration tests
 ```
 
 ---
 
 ## Tech Stack
 
-> Fill in once the stack is decided. Example entries:
+- **Language:** C# (.NET 8 or later)
+- **Framework:** ASP.NET Core Web API
+- **ORM:** Entity Framework Core (update if using Dapper or other)
+- **Testing:** xUnit + Moq + FluentAssertions
+- **Linter/Formatter:** `dotnet format` (built-in)
+- **API Docs:** Swagger / Scalar (via `Swashbuckle` or `Microsoft.AspNetCore.OpenApi`)
 
-- **Language:** (e.g., TypeScript, Python, Go)
-- **Framework:** (e.g., Next.js, FastAPI, Gin)
-- **Database:** (e.g., PostgreSQL, SQLite, Redis)
-- **Testing:** (e.g., Jest, pytest, Go test)
-- **Linter/Formatter:** (e.g., ESLint + Prettier, Ruff, gofmt)
+> Update these entries as tooling decisions are finalized.
 
 ---
 
@@ -64,8 +77,9 @@ Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`
 
 Examples:
 ```
-feat(auth): add JWT token refresh endpoint
-fix(api): handle null pointer in user lookup
+feat(users): add GET /users/{id} endpoint
+fix(auth): correct JWT expiry validation
+test(orders): add unit tests for OrderService
 docs: update CLAUDE.md with project structure
 ```
 
@@ -80,8 +94,6 @@ docs: update CLAUDE.md with project structure
 
 ## Commands
 
-> Update this section with actual commands once tooling is configured.
-
 ### Setup
 
 ```bash
@@ -89,100 +101,156 @@ docs: update CLAUDE.md with project structure
 git clone <repo-url>
 cd teamstestrepo
 
-# Install dependencies (update command for your package manager)
-# npm install / pip install -r requirements.txt / go mod download
+# Restore NuGet packages
+dotnet restore
+
+# Apply database migrations (if using EF Core)
+dotnet ef database update --project src/TeamstestRepo.Api
 ```
 
 ### Development
 
 ```bash
-# Start development server (update for your stack)
-# npm run dev / uvicorn app.main:app --reload / go run ./cmd/server
+# Run the API locally
+dotnet run --project src/TeamstestRepo.Api
+
+# Run with hot reload
+dotnet watch run --project src/TeamstestRepo.Api
 ```
 
 ### Testing
 
 ```bash
 # Run all tests
-# npm test / pytest / go test ./...
+dotnet test
 
-# Run tests in watch mode
-# npm run test:watch / pytest -f / gotestsum --watch
+# Run with detailed output
+dotnet test --logger "console;verbosity=detailed"
+
+# Run a specific test project
+dotnet test tests/TeamstestRepo.UnitTests
 ```
 
 ### Linting & Formatting
 
 ```bash
-# Lint
-# npm run lint / ruff check . / golangci-lint run
+# Check formatting
+dotnet format --verify-no-changes
 
-# Format
-# npm run format / ruff format . / gofmt -w .
+# Apply formatting
+dotnet format
 
-# Type check
-# npm run typecheck / mypy . / go vet ./...
+# Build with warnings as errors (good for CI)
+dotnet build --warnaserror
 ```
 
 ### Build
 
 ```bash
-# Production build
-# npm run build / python -m build / go build ./...
+# Debug build
+dotnet build
+
+# Release build
+dotnet build -c Release
+
+# Publish (self-contained)
+dotnet publish -c Release -o ./publish
+```
+
+### Entity Framework Core
+
+```bash
+# Add a new migration
+dotnet ef migrations add <MigrationName> --project src/TeamstestRepo.Api
+
+# Apply migrations
+dotnet ef database update --project src/TeamstestRepo.Api
+
+# Revert last migration
+dotnet ef migrations remove --project src/TeamstestRepo.Api
 ```
 
 ---
 
 ## Code Conventions
 
-> Establish and document conventions here as the codebase develops. Initial guidelines:
+### Naming (Microsoft C# conventions)
 
-### General
+- **Classes, methods, properties:** `PascalCase`
+- **Local variables, parameters:** `camelCase`
+- **Private fields:** `_camelCase` (underscore prefix)
+- **Constants:** `PascalCase` (not `ALL_CAPS`)
+- **Interfaces:** prefix with `I` — `IUserService`, `IRepository<T>`
+- **Async methods:** suffix with `Async` — `GetUserAsync()`, `SaveAsync()`
 
-- Prefer clarity over cleverness — write code that is easy to read and review
-- Keep functions small and focused on a single responsibility
-- Avoid premature abstractions; extract helpers when a pattern appears 3+ times
-- No commented-out code in commits; use version control instead
+### Project Structure Conventions
 
-### Naming
+- One class per file; filename matches class name
+- Controllers are thin — delegate all logic to services
+- Services contain business logic; repositories handle data access
+- DTOs (request/response models) live in `Models/` and are separate from domain entities
 
-- Use descriptive names; avoid single-letter variables except in short loops
-- Be consistent with the existing style in each file
+### Async / Await
+
+- Always use `async`/`await` for I/O-bound operations (DB, HTTP, file)
+- Never use `.Result` or `.Wait()` — this can cause deadlocks
+- Use `CancellationToken` parameters on all async public methods
+
+### Dependency Injection
+
+- Register services in `Program.cs` (or extension methods grouped by feature)
+- Prefer constructor injection; avoid service locator pattern
+- Use appropriate lifetimes: `Singleton`, `Scoped`, `Transient`
 
 ### Error Handling
 
-- Handle errors explicitly; do not silently swallow them
-- Return meaningful error messages at system boundaries (API responses, CLI output)
-- Log errors with enough context to diagnose them
+- Use a global exception-handling middleware or `IExceptionHandler` (ASP.NET Core 8+)
+- Return RFC 7807 Problem Details for API errors (`Results.Problem(...)`)
+- Do not swallow exceptions silently; log with enough context
+- Use `ILogger<T>` for structured logging — avoid `Console.WriteLine`
 
 ### Security
 
-- Never commit secrets, credentials, API keys, or tokens
-- Use environment variables for configuration; provide a `.env.example` template
-- Validate and sanitize all external input (user data, API payloads, file uploads)
-- Follow OWASP Top 10 guidelines when building web interfaces
+- Never commit secrets, connection strings, or API keys — use `appsettings.Development.json` (git-ignored) or environment variables
+- Use ASP.NET Core's built-in data protection and authentication middleware
+- Validate all incoming DTOs with Data Annotations or FluentValidation
+- Sanitize query parameters to prevent injection attacks
+- Follow OWASP Top 10 guidelines
 
 ---
 
-## Environment Variables
+## Configuration & Secrets
 
-> Document required environment variables here. Example:
+- `appsettings.json` — non-sensitive defaults (checked into git)
+- `appsettings.Development.json` — local overrides, should be **git-ignored**
+- Environment variables override `appsettings` at runtime
+- Use [.NET Secret Manager](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) for local development secrets:
 
-| Variable | Description | Required | Default |
-|---|---|---|---|
-| `APP_ENV` | Runtime environment (`development`, `production`) | Yes | `development` |
-| `DATABASE_URL` | Connection string for the database | Yes | — |
-| `SECRET_KEY` | Application secret for signing tokens | Yes | — |
+```bash
+dotnet user-secrets init --project src/TeamstestRepo.Api
+dotnet user-secrets set "ConnectionStrings:Default" "Server=..." --project src/TeamstestRepo.Api
+```
 
-Copy `.env.example` to `.env` and fill in values before running locally.
+### Common Configuration Keys
+
+| Key | Description | Required |
+|---|---|---|
+| `ConnectionStrings:Default` | Database connection string | Yes |
+| `Jwt:SecretKey` | Secret key for JWT signing | Yes |
+| `Jwt:Issuer` | JWT issuer | Yes |
+| `Jwt:Audience` | JWT audience | Yes |
 
 ---
 
 ## Testing Guidelines
 
-- Write tests alongside new features — do not defer them
-- Aim for high coverage of business logic; avoid testing implementation details
-- Use descriptive test names that explain the scenario and expected outcome
-- Prefer integration tests for critical user flows; unit tests for complex logic
+- Use **xUnit** as the test framework
+- Use **Moq** for mocking dependencies
+- Use **FluentAssertions** for readable assertions (`result.Should().Be(...)`)
+- Use `WebApplicationFactory<Program>` for integration tests against the full pipeline
+- Name test methods: `MethodName_Scenario_ExpectedResult`
+  - Example: `GetUser_UserDoesNotExist_Returns404`
+- Do not test EF Core internals; use an in-memory database or test containers for integration tests
 
 ---
 
@@ -191,22 +259,26 @@ Copy `.env.example` to `.env` and fill in values before running locally.
 When working in this repository, follow these guidelines:
 
 1. **Read before modifying** — always read a file before editing it
-2. **Minimal changes** — make only the changes necessary to complete the task; avoid unrelated refactors
-3. **No secrets** — never commit credentials, tokens, or private keys
-4. **Test your changes** — run the test suite and linter before committing
-5. **Clear commits** — write a commit message that explains *why*, not just *what*
-6. **Update this file** — when you add significant new structure, commands, or conventions, update CLAUDE.md accordingly
-7. **Ask before destructive actions** — confirm with the user before deleting files, force-pushing, or modifying CI/CD pipelines
+2. **Follow C# conventions** — PascalCase types, `_camelCase` private fields, `Async` suffix on async methods
+3. **Keep controllers thin** — business logic belongs in services, not controllers
+4. **Always use async/await** — never `.Result` or `.Wait()`
+5. **No secrets in code** — use configuration/environment variables
+6. **Validate inputs** — all controller action parameters should be validated
+7. **Run tests before committing** — `dotnet test` must pass
+8. **Minimal changes** — make only the changes necessary; avoid unrelated refactors
+9. **Update this file** — when significant structure or conventions change, update CLAUDE.md
+10. **Ask before destructive actions** — confirm before deleting migrations, dropping tables, or force-pushing
 
 ---
 
 ## Useful References
 
-> Add links to relevant documentation, architecture decisions, or external services here.
-
+- [ASP.NET Core documentation](https://learn.microsoft.com/en-us/aspnet/core/)
+- [EF Core documentation](https://learn.microsoft.com/en-us/ef/core/)
+- [C# coding conventions (Microsoft)](https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/coding-style/coding-conventions)
 - [Conventional Commits](https://www.conventionalcommits.org/)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 
 ---
 
-*Last updated: 2026-03-20 — repository initialization*
+*Last updated: 2026-03-20 — C# / ASP.NET Core Web API project setup*
