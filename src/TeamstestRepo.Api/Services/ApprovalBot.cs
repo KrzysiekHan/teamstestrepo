@@ -1,0 +1,81 @@
+using Microsoft.Bot.Builder;
+using Microsoft.Bot.Schema;
+using Newtonsoft.Json.Linq;
+using TeamstestRepo.Api.Models;
+
+namespace TeamstestRepo.Api.Services;
+
+/// <summary>
+/// Bot obsługuje przychodzące aktywności z Teams — w szczególności
+/// zdarzenia "invoke" z wypełnioną Adaptive Card.
+/// </summary>
+public sealed class ApprovalBot : ActivityHandler
+{
+    private readonly IApprovalService _approvalService;
+    private readonly ILogger<ApprovalBot> _logger;
+
+    public ApprovalBot(IApprovalService approvalService, ILogger<ApprovalBot> logger)
+    {
+        _approvalService = approvalService;
+        _logger = logger;
+    }
+
+    protected override async Task OnInvokeActivityAsync(ITurnContext<IInvokeActivity> turnContext, CancellationToken cancellationToken)
+    {
+        if (turnContext.Activity.Name != "adaptiveCard/action")
+        {
+            await base.OnInvokeActivityAsync(turnContext, cancellationToken);
+            return;
+        }
+
+        var value = JObject.FromObject(turnContext.Activity.Value ?? new object());
+        var data = value["action"]?["data"];
+
+        if (data is null)
+        {
+            _logger.LogWarning("Received adaptiveCard/action without data payload.");
+            await SendInvokeResponseAsync(turnContext, StatusCodes.Status400BadRequest, cancellationToken);
+            return;
+        }
+
+        var payload = new AdaptiveCardPayload
+        {
+            ProcessId = data["processId"]?.ToString() ?? string.Empty,
+            Decision = data["decision"]?.ToString() ?? string.Empty,
+            Field1 = data["field1"]?.ToString() ?? string.Empty,
+            Field2 = data["field2"]?.ToString() ?? string.Empty
+        };
+
+        var decidedByUserId = turnContext.Activity.From?.AadObjectId
+                              ?? turnContext.Activity.From?.Id
+                              ?? "unknown";
+
+        _logger.LogInformation(
+            "Decision '{Decision}' received for process {ProcessId} from {User}",
+            payload.Decision, payload.ProcessId, decidedByUserId);
+
+        await _approvalService.ProcessDecisionAsync(payload, decidedByUserId, cancellationToken);
+
+        // Potwierdź akcję kartą z podziękowaniem
+        var confirmationMessage = payload.Decision.Equals("approve", StringComparison.OrdinalIgnoreCase)
+            ? "Proces został **zatwierdzony**."
+            : "Proces został **odrzucony**.";
+
+        await turnContext.SendActivityAsync(
+            MessageFactory.Text(confirmationMessage), cancellationToken);
+
+        await SendInvokeResponseAsync(turnContext, StatusCodes.Status200OK, cancellationToken);
+    }
+
+    private static async Task SendInvokeResponseAsync(
+        ITurnContext turnContext, int statusCode, CancellationToken cancellationToken)
+    {
+        await turnContext.SendActivityAsync(
+            new Activity
+            {
+                Type = ActivityTypes.InvokeResponse,
+                Value = new InvokeResponse { Status = statusCode }
+            },
+            cancellationToken);
+    }
+}

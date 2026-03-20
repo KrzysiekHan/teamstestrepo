@@ -1,0 +1,63 @@
+{
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "type": "AdaptiveCard",
+  "version": "1.5",
+  "body": [
+    {
+      "type": "TextBlock",
+      "text": "Wymagane zatwierdzenie",
+      "weight": "Bolder",
+      "size": "Medium"
+    },
+    {
+      "type": "TextBlock",
+      "text": "{{ProcessTitle}}",
+      "wrap": true,
+      "spacing": "Small"
+    },
+    {
+      "type": "Input.Text",
+      "id": "field1",
+      "label": "{{Field1Label}}",
+      "isRequired": true,
+      "errorMessage": "To pole jest wymagane.",
+      "placeholder": "Wpisz wartość..."
+    },
+    {
+      "type": "Input.Text",
+      "id": "field2",
+      "label": "{{Field2Label}}",
+      "isRequired": true,
+      "errorMessage": "To pole jest wymagane.",
+      "placeholder": "Wpisz wartość..."
+    },
+    {
+      "type": "Input.Text",
+      "id": "processId",
+      "value": "{{ProcessId}}",
+      "isVisible": false
+    }
+  ],
+  "actions": [
+    {
+      "type": "Action.Execute",
+      "title": "Zatwierdź",
+      "verb": "approve",
+      "style": "positive",
+      "data": {
+        "processId": "{{ProcessId}}",
+        "decision": "approve"
+      }
+    },
+    {
+      "type": "Action.Execute",
+      "title": "Odrzuć",
+      "verb": "reject",
+      "style": "destructive",
+      "data": {
+        "processId": "{{ProcessId}}",
+        "decision": "reject"
+      }
+    }
+  ]
+}

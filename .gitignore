@@ -1,0 +1,35 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+_ReSharper*/
+*.DotSettings.user
+
+## Sekrety lokalne — nigdy nie commitować
+**/appsettings.Development.json
+**/appsettings.Local.json
+**/*.local.json
+**/secrets.json
+
+## dotnet user-secrets store (przechowywany poza repozytorium automatycznie)
+
+## Publish
+publish/
+out/
+
+## Testy
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+## OS
+.DS_Store
+Thumbs.db
+
+## IDE
+.idea/
+*.swp
