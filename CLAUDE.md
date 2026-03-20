@@ -7,88 +7,191 @@ This file provides guidance to AI assistants (Claude and others) working within 
 ## Repository Overview
 
 **Repository:** KrzysiekHan/teamstestrepo
-**Language:** C# / .NET
-**Type:** ASP.NET Core Web API
-**Status:** Newly initialized — no source code has been committed yet.
+**Language:** C# / .NET 8
+**Type:** ASP.NET Core Web API — Microsoft Teams Approval Bot
 
-> Update this section with a short description of the API's purpose and domain once development begins.
+### Cel aplikacji
+
+Aplikacja zastępuje ręczny proces zatwierdzania. Przepływ:
+
+1. **Zewnętrzny system** wywołuje endpoint tej aplikacji (`POST /approvals`), przekazując dane procesu i identyfikator pracownika
+2. **Aplikacja** wysyła do wskazanego pracownika wiadomość w Microsoft Teams w formie Adaptive Card z dwoma polami do wypełnienia oraz przyciskami **Zatwierdź** / **Odrzuć**
+3. **Pracownik** wypełnia formularz i klika przycisk
+4. **Aplikacja** wywołuje endpoint zewnętrznego systemu, przekazując decyzję (approve/reject) wraz z wypełnionymi polami
+
+Użytkownicy są zarządzani przez **Microsoft Entra ID** (Azure AD) — brak lokalnej bazy użytkowników.
+
+---
+
+## Architektura
+
+```
+Zewnętrzny system
+      │
+      │  POST /approvals  {userId, processId, ...}
+      ▼
+┌─────────────────────────────┐
+│   ASP.NET Core Web API      │
+│   (ta aplikacja)            │
+│                             │
+│  ┌─────────────────────┐    │
+│  │  Approvals          │    │
+│  │  Controller         │    │
+│  └────────┬────────────┘    │
+│           │                 │
+│  ┌────────▼────────────┐    │
+│  │  ApprovalService    │    │◄──── Microsoft Entra ID
+│  └────────┬────────────┘    │      (autentykacja, tożsamość)
+│           │                 │
+│  ┌────────▼────────────┐    │
+│  │  TeamsNotifier      │    │──── Bot Framework / Graph API
+│  └─────────────────────┘    │     → Adaptive Card do pracownika
+└─────────────────────────────┘
+      │
+      │  POST {callbackUrl}  {decision, field1, field2}
+      ▼
+Zewnętrzny system
+```
 
 ---
 
 ## Project Structure
 
-Typical ASP.NET Core Web API layout (update once files are added):
-
 ```
 teamstestrepo/
-├── CLAUDE.md                        # AI assistant guidance (this file)
-├── README.md                        # Human-facing documentation
-├── teamstestrepo.sln                # Solution file
+├── CLAUDE.md
+├── README.md
+├── teamstestrepo.sln
 ├── src/
-│   └── TeamstestRepo.Api/           # Main Web API project
-│       ├── Controllers/             # API controllers
-│       ├── Models/                  # Request/response DTOs
-│       ├── Services/                # Business logic
-│       ├── Data/                    # EF Core DbContext, repositories
-│       ├── Middleware/              # Custom middleware
-│       ├── appsettings.json         # Configuration
-│       ├── appsettings.Development.json
-│       └── Program.cs               # App entry point / DI composition root
+│   └── TeamstestRepo.Api/
+│       ├── Controllers/
+│       │   ├── ApprovalsController.cs     # POST /approvals — przyjmuje żądania z zewnątrz
+│       │   └── BotController.cs           # POST /api/messages — endpoint Bot Framework
+│       ├── Models/
+│       │   ├── ApprovalRequest.cs         # DTO z zewnętrznego systemu
+│       │   ├── ApprovalDecision.cs        # DTO wysyłane z powrotem do zewnętrznego systemu
+│       │   └── AdaptiveCardPayload.cs     # Dane z formularza Teams
+│       ├── Services/
+│       │   ├── IApprovalService.cs
+│       │   ├── ApprovalService.cs         # Logika biznesowa procesu zatwierdzania
+│       │   ├── ITeamsNotifier.cs
+│       │   └── TeamsNotifier.cs           # Wysyłanie proaktywnych wiadomości do Teams
+│       ├── Cards/
+│       │   └── ApprovalCard.json          # Szablon Adaptive Card
+│       ├── Middleware/
+│       │   └── ApiKeyMiddleware.cs        # Weryfikacja klucza API dla /approvals
+│       ├── appsettings.json
+│       ├── appsettings.Development.json   # git-ignored, lokalne sekrety
+│       └── Program.cs
 └── tests/
-    ├── TeamstestRepo.UnitTests/     # xUnit unit tests
-    └── TeamstestRepo.IntegrationTests/ # Integration tests
+    ├── TeamstestRepo.UnitTests/
+    │   ├── ApprovalServiceTests.cs
+    │   └── TeamsNotifierTests.cs
+    └── TeamstestRepo.IntegrationTests/
+        └── ApprovalsEndpointTests.cs
 ```
 
 ---
 
 ## Tech Stack
 
-- **Language:** C# (.NET 8 or later)
-- **Framework:** ASP.NET Core Web API
-- **ORM:** Entity Framework Core (update if using Dapper or other)
-- **Testing:** xUnit + Moq + FluentAssertions
-- **Linter/Formatter:** `dotnet format` (built-in)
-- **API Docs:** Swagger / Scalar (via `Swashbuckle` or `Microsoft.AspNetCore.OpenApi`)
-
-> Update these entries as tooling decisions are finalized.
+| Warstwa | Technologia |
+|---|---|
+| Framework | ASP.NET Core 8 Web API |
+| Bot | Microsoft Bot Framework SDK (`Microsoft.Bot.Builder`) |
+| Teams karty | Adaptive Cards |
+| Tożsamość użytkowników | Microsoft Entra ID (Azure AD) |
+| Graph API | `Microsoft.Graph` SDK — wysyłanie proaktywnych wiadomości |
+| Autentykacja bota | Azure Bot Service (App Registration) |
+| Testy | xUnit + Moq + FluentAssertions |
+| Format odpowiedzi | RFC 7807 Problem Details |
 
 ---
 
-## Development Workflow
+## Kluczowe przepływy
 
-### Branching Strategy
-
-- **Main branch:** `main` (protected — do not push directly)
-- **Feature branches:** `feature/<short-description>`
-- **Bug fix branches:** `fix/<short-description>`
-- **AI-assisted branches:** `claude/<task-description>-<session-id>`
-
-### Commit Conventions
-
-Use [Conventional Commits](https://www.conventionalcommits.org/) format:
+### 1. Inicjowanie zatwierdzenia (inbound)
 
 ```
-<type>(<scope>): <short summary>
-
-[optional body]
+POST /approvals
+Authorization: ApiKey {secret}
+{
+  "processId": "...",
+  "userId": "user@company.com",   // Entra ID UPN lub objectId
+  "callbackUrl": "https://...",   // gdzie odesłać decyzję
+  "field1Label": "Komentarz",
+  "field2Label": "Numer zlecenia"
+}
 ```
 
-Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `ci`
+- Aplikacja waliduje klucz API w middleware
+- Pobiera Teams `conversationReference` dla użytkownika przez Microsoft Graph
+- Wysyła Adaptive Card jako proaktywną wiadomość
 
-Examples:
+### 2. Odpowiedź pracownika (Teams → bot)
+
+Bot Framework dostarcza payload do `POST /api/messages`:
+
+```json
+{
+  "type": "invoke",
+  "value": {
+    "processId": "...",
+    "decision": "approve",
+    "field1": "wartość wpisana przez pracownika",
+    "field2": "wartość wpisana przez pracownika"
+  }
+}
 ```
-feat(users): add GET /users/{id} endpoint
-fix(auth): correct JWT expiry validation
-test(orders): add unit tests for OrderService
-docs: update CLAUDE.md with project structure
+
+### 3. Odesłanie decyzji (outbound)
+
+Aplikacja wywołuje `callbackUrl` z zewnętrznego żądania:
+
+```
+POST {callbackUrl}
+{
+  "processId": "...",
+  "decision": "approve" | "reject",
+  "decidedBy": "user@company.com",
+  "decidedAt": "2026-03-20T15:00:00Z",
+  "field1": "...",
+  "field2": "..."
+}
 ```
 
-### Pull Requests
+---
 
-- Keep PRs focused — one concern per PR
-- Include a description of what changed and why
-- Ensure all CI checks pass before requesting review
-- Link related issues with `Closes #<issue-number>`
+## Konfiguracja
+
+### appsettings.json (niesekrety)
+
+```json
+{
+  "BotFramework": {
+    "AppId": "",
+    "TenantId": ""
+  },
+  "ExternalApi": {
+    "TimeoutSeconds": 30
+  }
+}
+```
+
+### Sekrety (Secret Manager / zmienne środowiskowe)
+
+| Klucz | Opis |
+|---|---|
+| `BotFramework:AppSecret` | Sekret App Registration bota |
+| `ApiKey:InboundSecret` | Klucz API do endpointu `/approvals` |
+| `Graph:ClientSecret` | Sekret do Microsoft Graph (jeśli oddzielny) |
+
+```bash
+# Lokalna konfiguracja sekretów
+dotnet user-secrets init --project src/TeamstestRepo.Api
+dotnet user-secrets set "BotFramework:AppSecret" "..." --project src/TeamstestRepo.Api
+dotnet user-secrets set "ApiKey:InboundSecret" "..." --project src/TeamstestRepo.Api
+```
 
 ---
 
@@ -97,188 +200,129 @@ docs: update CLAUDE.md with project structure
 ### Setup
 
 ```bash
-# Clone and enter the repo
 git clone <repo-url>
 cd teamstestrepo
-
-# Restore NuGet packages
 dotnet restore
-
-# Apply database migrations (if using EF Core)
-dotnet ef database update --project src/TeamstestRepo.Api
 ```
 
 ### Development
 
 ```bash
-# Run the API locally
+# Uruchom API
 dotnet run --project src/TeamstestRepo.Api
 
-# Run with hot reload
+# Hot reload
 dotnet watch run --project src/TeamstestRepo.Api
+
+# Tunelowanie dla Bot Framework (wymagane do lokalnych testów z Teams)
+# ngrok http 5000  lub  devtunnel host -p 5000
+# Następnie zaktualizuj Messaging Endpoint w Azure Bot: https://<tunnel>/api/messages
 ```
 
 ### Testing
 
 ```bash
-# Run all tests
 dotnet test
-
-# Run with detailed output
 dotnet test --logger "console;verbosity=detailed"
-
-# Run a specific test project
 dotnet test tests/TeamstestRepo.UnitTests
 ```
 
 ### Linting & Formatting
 
 ```bash
-# Check formatting
-dotnet format --verify-no-changes
-
-# Apply formatting
-dotnet format
-
-# Build with warnings as errors (good for CI)
-dotnet build --warnaserror
+dotnet format --verify-no-changes   # sprawdź
+dotnet format                        # napraw
+dotnet build --warnaserror           # build z ostrzeżeniami jako błędy
 ```
 
 ### Build
 
 ```bash
-# Debug build
 dotnet build
-
-# Release build
 dotnet build -c Release
-
-# Publish (self-contained)
 dotnet publish -c Release -o ./publish
-```
-
-### Entity Framework Core
-
-```bash
-# Add a new migration
-dotnet ef migrations add <MigrationName> --project src/TeamstestRepo.Api
-
-# Apply migrations
-dotnet ef database update --project src/TeamstestRepo.Api
-
-# Revert last migration
-dotnet ef migrations remove --project src/TeamstestRepo.Api
 ```
 
 ---
 
 ## Code Conventions
 
-### Naming (Microsoft C# conventions)
+### Nazewnictwo (standardy Microsoft C#)
 
-- **Classes, methods, properties:** `PascalCase`
-- **Local variables, parameters:** `camelCase`
-- **Private fields:** `_camelCase` (underscore prefix)
-- **Constants:** `PascalCase` (not `ALL_CAPS`)
-- **Interfaces:** prefix with `I` — `IUserService`, `IRepository<T>`
-- **Async methods:** suffix with `Async` — `GetUserAsync()`, `SaveAsync()`
+- **Klasy, metody, właściwości, zdarzenia:** `PascalCase`
+- **Lokalne zmienne, parametry:** `camelCase`
+- **Prywatne pola:** `_camelCase`
+- **Interfejsy:** prefix `I` — `IApprovalService`, `ITeamsNotifier`
+- **Metody async:** sufiks `Async` — `SendApprovalCardAsync()`, `HandleDecisionAsync()`
 
-### Project Structure Conventions
+### Wzorce architektury
 
-- One class per file; filename matches class name
-- Controllers are thin — delegate all logic to services
-- Services contain business logic; repositories handle data access
-- DTOs (request/response models) live in `Models/` and are separate from domain entities
+- Kontrolery są **cienkie** — tylko routing, walidacja wejścia, delegacja do serwisów
+- Logika biznesowa w serwisach; serwisy rejestrowane przez DI jako `Scoped`
+- `TeamsNotifier` jest odpowiedzialny **wyłącznie** za komunikację z Teams/Bot Framework
+- `ApprovalService` jest odpowiedzialny **wyłącznie** za logikę procesu zatwierdzania
+- Modele (`Models/`) to czyste DTO — brak logiki, brak atrybutów EF
 
 ### Async / Await
 
-- Always use `async`/`await` for I/O-bound operations (DB, HTTP, file)
-- Never use `.Result` or `.Wait()` — this can cause deadlocks
-- Use `CancellationToken` parameters on all async public methods
+- Zawsze `async`/`await` dla operacji I/O (HTTP calls do Graph, do zewnętrznego systemu)
+- **Nigdy** `.Result` ani `.Wait()` — grozi deadlockiem
+- Wszystkie publiczne metody async przyjmują `CancellationToken`
 
-### Dependency Injection
+### Obsługa błędów
 
-- Register services in `Program.cs` (or extension methods grouped by feature)
-- Prefer constructor injection; avoid service locator pattern
-- Use appropriate lifetimes: `Singleton`, `Scoped`, `Transient`
+- Globalny handler wyjątków (`IExceptionHandler` lub middleware)
+- Odpowiedzi błędów w formacie RFC 7807 Problem Details
+- Logowanie przez `ILogger<T>` ze structured logging — nigdy `Console.WriteLine`
+- Błędy callbacku do zewnętrznego systemu logować i zwracać odpowiedni status — nie przerywać wątku
 
-### Error Handling
+### Bezpieczeństwo
 
-- Use a global exception-handling middleware or `IExceptionHandler` (ASP.NET Core 8+)
-- Return RFC 7807 Problem Details for API errors (`Results.Problem(...)`)
-- Do not swallow exceptions silently; log with enough context
-- Use `ILogger<T>` for structured logging — avoid `Console.WriteLine`
-
-### Security
-
-- Never commit secrets, connection strings, or API keys — use `appsettings.Development.json` (git-ignored) or environment variables
-- Use ASP.NET Core's built-in data protection and authentication middleware
-- Validate all incoming DTOs with Data Annotations or FluentValidation
-- Sanitize query parameters to prevent injection attacks
-- Follow OWASP Top 10 guidelines
-
----
-
-## Configuration & Secrets
-
-- `appsettings.json` — non-sensitive defaults (checked into git)
-- `appsettings.Development.json` — local overrides, should be **git-ignored**
-- Environment variables override `appsettings` at runtime
-- Use [.NET Secret Manager](https://learn.microsoft.com/en-us/aspnet/core/security/app-secrets) for local development secrets:
-
-```bash
-dotnet user-secrets init --project src/TeamstestRepo.Api
-dotnet user-secrets set "ConnectionStrings:Default" "Server=..." --project src/TeamstestRepo.Api
-```
-
-### Common Configuration Keys
-
-| Key | Description | Required |
-|---|---|---|
-| `ConnectionStrings:Default` | Database connection string | Yes |
-| `Jwt:SecretKey` | Secret key for JWT signing | Yes |
-| `Jwt:Issuer` | JWT issuer | Yes |
-| `Jwt:Audience` | JWT audience | Yes |
+- Endpoint `/approvals` chroniony kluczem API w nagłówku (`X-Api-Key`)
+- Endpoint `/api/messages` weryfikowany przez Bot Framework (JWT z Azure)
+- Nigdy nie logować pełnych payloadów zawierających dane biznesowe na poziomie INFO
+- Wszystkie zewnętrzne wywołania HTTP mają skonfigurowany timeout
 
 ---
 
 ## Testing Guidelines
 
-- Use **xUnit** as the test framework
-- Use **Moq** for mocking dependencies
-- Use **FluentAssertions** for readable assertions (`result.Should().Be(...)`)
-- Use `WebApplicationFactory<Program>` for integration tests against the full pipeline
-- Name test methods: `MethodName_Scenario_ExpectedResult`
-  - Example: `GetUser_UserDoesNotExist_Returns404`
-- Do not test EF Core internals; use an in-memory database or test containers for integration tests
+- **xUnit** jako framework testowy
+- **Moq** do mockowania zależności (`ITeamsNotifier`, `IApprovalService`, `HttpClient`)
+- **FluentAssertions** do czytelnych asercji
+- Nazewnictwo testów: `MethodName_Scenario_ExpectedResult`
+  - Przykład: `HandleDecision_ValidApprove_CallsCallbackWithCorrectPayload`
+- Testy integracyjne: `WebApplicationFactory<Program>` z podmienionymi serwisami Teams
+- Nie mockować Bot Framework internals — testować serwisy w izolacji
 
 ---
 
 ## AI Assistant Instructions
 
-When working in this repository, follow these guidelines:
-
-1. **Read before modifying** — always read a file before editing it
-2. **Follow C# conventions** — PascalCase types, `_camelCase` private fields, `Async` suffix on async methods
-3. **Keep controllers thin** — business logic belongs in services, not controllers
-4. **Always use async/await** — never `.Result` or `.Wait()`
-5. **No secrets in code** — use configuration/environment variables
-6. **Validate inputs** — all controller action parameters should be validated
-7. **Run tests before committing** — `dotnet test` must pass
-8. **Minimal changes** — make only the changes necessary; avoid unrelated refactors
-9. **Update this file** — when significant structure or conventions change, update CLAUDE.md
-10. **Ask before destructive actions** — confirm before deleting migrations, dropping tables, or force-pushing
+1. **Czytaj przed modyfikacją** — zawsze przeczytaj plik przed edycją
+2. **Cienkie kontrolery** — logika należy do serwisów, nie do kontrolerów
+3. **Zawsze async/await** — nigdy `.Result` ani `.Wait()`
+4. **Brak sekretów w kodzie** — konfiguracja przez Secret Manager lub env vars
+5. **Waliduj wejście** — wszystkie DTO z zewnątrz muszą być walidowane (Data Annotations lub FluentValidation)
+6. **Używaj `ILogger<T>`** — nie `Console.WriteLine`
+7. **CancellationToken** — przekazuj go przez cały stos async
+8. **Uruchom testy** — `dotnet test` musi przejść przed commitem
+9. **Minimalne zmiany** — nie refaktoruj kodu niezwiązanego z zadaniem
+10. **Aktualizuj CLAUDE.md** — gdy zmienia się architektura lub konwencje
 
 ---
 
 ## Useful References
 
-- [ASP.NET Core documentation](https://learn.microsoft.com/en-us/aspnet/core/)
-- [EF Core documentation](https://learn.microsoft.com/en-us/ef/core/)
-- [C# coding conventions (Microsoft)](https://learn.microsoft.com/en-us/dotnet/csharp/fundamentals/coding-style/coding-conventions)
+- [Bot Framework SDK dla C#](https://learn.microsoft.com/en-us/azure/bot-service/dotnet/bot-builder-dotnet-sdk-quickstart)
+- [Proaktywne wiadomości w Teams](https://learn.microsoft.com/en-us/microsoftteams/platform/bots/how-to/conversations/send-proactive-messages)
+- [Adaptive Cards](https://adaptivecards.io/)
+- [Adaptive Card Designer](https://adaptivecards.io/designer/)
+- [Microsoft Graph SDK (.NET)](https://learn.microsoft.com/en-us/graph/sdks/sdks-overview)
+- [Microsoft Entra ID — rejestracja aplikacji](https://learn.microsoft.com/en-us/entra/identity-platform/quickstart-register-app)
+- [ASP.NET Core Problem Details](https://learn.microsoft.com/en-us/aspnet/core/fundamentals/error-handling#problem-details)
 - [Conventional Commits](https://www.conventionalcommits.org/)
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 
 ---
 
-*Last updated: 2026-03-20 — C# / ASP.NET Core Web API project setup*
+*Last updated: 2026-03-20 — Teams approval bot architecture defined*
