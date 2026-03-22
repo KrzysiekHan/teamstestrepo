@@ -48,7 +48,7 @@ public sealed class TeamsNotifier : ITeamsNotifier
             conversationReference,
             async (turnContext, ct) =>
             {
-                var card = new Attachment
+                var card = new Microsoft.Bot.Schema.Attachment
                 {
                     ContentType = "application/vnd.microsoft.card.adaptive",
                     Content = Newtonsoft.Json.JsonConvert.DeserializeObject(cardJson)

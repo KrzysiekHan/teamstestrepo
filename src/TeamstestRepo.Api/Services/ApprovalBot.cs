@@ -20,12 +20,11 @@ public sealed class ApprovalBot : ActivityHandler
         _logger = logger;
     }
 
-    protected override async Task OnInvokeActivityAsync(ITurnContext<IInvokeActivity> turnContext, CancellationToken cancellationToken)
+    protected override async Task<InvokeResponse> OnInvokeActivityAsync(ITurnContext<IInvokeActivity> turnContext, CancellationToken cancellationToken)
     {
         if (turnContext.Activity.Name != "adaptiveCard/action")
         {
-            await base.OnInvokeActivityAsync(turnContext, cancellationToken);
-            return;
+            return await base.OnInvokeActivityAsync(turnContext, cancellationToken);
         }
 
         var value = JObject.FromObject(turnContext.Activity.Value ?? new object());
@@ -34,8 +33,7 @@ public sealed class ApprovalBot : ActivityHandler
         if (data is null)
         {
             _logger.LogWarning("Received adaptiveCard/action without data payload.");
-            await SendInvokeResponseAsync(turnContext, StatusCodes.Status400BadRequest, cancellationToken);
-            return;
+            return CreateInvokeResponse(StatusCodes.Status400BadRequest);
         }
 
         var payload = new AdaptiveCardPayload
@@ -64,18 +62,11 @@ public sealed class ApprovalBot : ActivityHandler
         await turnContext.SendActivityAsync(
             MessageFactory.Text(confirmationMessage), cancellationToken);
 
-        await SendInvokeResponseAsync(turnContext, StatusCodes.Status200OK, cancellationToken);
+        return CreateInvokeResponse(StatusCodes.Status200OK);
     }
 
-    private static async Task SendInvokeResponseAsync(
-        ITurnContext turnContext, int statusCode, CancellationToken cancellationToken)
+    private static InvokeResponse CreateInvokeResponse(int statusCode)
     {
-        await turnContext.SendActivityAsync(
-            new Activity
-            {
-                Type = ActivityTypes.InvokeResponse,
-                Value = new InvokeResponse { Status = statusCode }
-            },
-            cancellationToken);
+        return new InvokeResponse { Status = statusCode };
     }
 }
